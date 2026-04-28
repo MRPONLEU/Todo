@@ -212,9 +212,17 @@ export default function App() {
     try {
       await signIn();
     } catch (error: any) {
-      console.error("Login Error:", error);
+      console.error("Login Error Details:", {
+        code: error.code,
+        message: error.message,
+        domain: window.location.hostname
+      });
+      
       if (error.code === 'auth/unauthorized-domain') {
-        alert("Domain នេះមិនទាន់ត្រូវបានអនុញ្ញាតក្នុង Firebase ទេ។ សូមបន្ថែម " + window.location.hostname + " ទៅកាន់ Authorized Domains ក្នុង Firebase Console។");
+        const domain = window.location.hostname;
+        alert(`Domain "${domain}" មិនទាន់ត្រូវបានអនុញ្ញាតក្នុង Firebase ទេ។\n\nសូមអនុវត្តតាមជំហាននេះ៖\n1. ចូលទៅ Firebase Console\n2. ជ្រើសរើស "Authentication" -> "Settings"\n3. ជ្រើសរើស "Authorized domains"\n4. បន្ថែម "${domain}" ចូលក្នុងបញ្ជី។`);
+      } else if (error.code === 'auth/popup-blocked') {
+        alert("កម្មវិធីរុករក (Browser) របស់អ្នកបានរារាំងផ្ទាំង Login (Popup)។ សូមអនុញ្ញាតឱ្យ Popup បើកដំណើរការសម្រាប់គេហទំព័រនេះ។");
       } else {
         alert("មានបញ្ហាក្នុងការចូលប្រើប្រាស់៖ " + error.message);
       }
@@ -242,14 +250,22 @@ export default function App() {
             <ListTodo className="w-12 h-12 text-indigo-600" />
           </div>
           <h1 className="text-3xl font-bold mb-3 tracking-tight text-slate-800 khmer-font font-sans">សូមស្វាគមន៍</h1>
-          <p className="text-slate-500 text-base mb-10 khmer-font font-light">គ្រប់គ្រងរាល់កិច្ចការរបស់អ្នកនៅក្នុងកន្លែងតែមួយជាមួយភាពងាយស្រួល។</p>
-          <button
-            onClick={handleSignIn}
-            className="w-full flex items-center justify-center gap-4 bg-slate-900 text-white py-4 rounded-2xl hover:bg-slate-800 active:scale-[0.98] transition-all font-semibold shadow-lg shadow-indigo-200"
-          >
-            <LogIn className="w-6 h-6" />
-            <span className="khmer-font">ចូលជាមួយ Google</span>
-          </button>
+          <p className="text-slate-500 text-base mb-10 khmer-font font-light italic">គ្រប់គ្រងរាល់កិច្ចការរបស់អ្នកនៅក្នុងកន្លែងតែមួយជាមួយភាពងាយស្រួល។</p>
+          
+          <div className="space-y-4">
+            <button
+              onClick={handleSignIn}
+              className="w-full flex items-center justify-center gap-4 bg-slate-900 text-white py-4 rounded-2xl hover:bg-slate-800 active:scale-[0.98] transition-all font-semibold shadow-lg shadow-indigo-200"
+            >
+              <LogIn className="w-6 h-6" />
+              <span className="khmer-font">ចូលជាមួយ Google</span>
+            </button>
+            
+            <p className="text-[10px] text-slate-400 khmer-font leading-relaxed">
+              * ប្រសិនបើអ្នកមិនអាចចូលបាន សូមប្រាកដថាអ្នកបានបន្ថែម Domain នេះទៅក្នុង <br/>
+              <span className="font-bold text-slate-500">Authorized Domains</span> ក្នុង Firebase Console។
+            </p>
+          </div>
         </motion.div>
       </div>
     );
