@@ -4,7 +4,24 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, CheckCircle2, Circle, ListTodo, Search, LogOut, LogIn, Loader2, Calendar, AlertCircle, Clock, RotateCcw } from 'lucide-react';
+import { 
+  Plus, 
+  Trash2, 
+  Search, 
+  LogOut, 
+  LogIn, 
+  Loader2, 
+  Package, 
+  Printer, 
+  ShoppingCart, 
+  LayoutDashboard, 
+  History,
+  TrendingUp,
+  User as UserIcon,
+  CheckCircle2,
+  Clock,
+  AlertCircle
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   db, 
@@ -24,35 +41,97 @@ import {
   updateDoc, 
   deleteDoc, 
   doc, 
-  serverTimestamp,
-  Timestamp 
+  serverTimestamp 
 } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 
-interface Todo {
+// Types
+interface Product {
   id: string;
-  text: string;
-  completed: boolean;
-  createdAt: any;
+  name: string;
+  price: number;
+  stock: number;
+  imageUrl?: string;
   ownerId: string;
-  dueDate?: any;
-  recurrence?: 'none' | 'daily' | 'weekly' | 'monthly';
+  createdAt: any;
 }
 
-type FilterType = 'all' | 'active' | 'completed';
+interface Order {
+  id: string;
+  customerName?: string;
+  description: string;
+  quantity: number;
+  totalPrice: number;
+  status: 'pending' | 'in-progress' | 'completed';
+  ownerId: string;
+  createdAt: any;
+}
+
+interface SaleItem {
+  productId: string;
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+interface Sale {
+  id: string;
+  items: SaleItem[];
+  totalAmount: number;
+  ownerId: string;
+  createdAt: any;
+}
+
+type TabType = 'pos' | 'orders' | 'inventory' | 'stats';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
-  const [todos, setTodos] = useState<Todo[]>([]);
-  const [input, setInput] = useState('');
-  const [dueDateInput, setDueDateInput] = useState('');
-  const [recurrence, setRecurrence] = useState<'none' | 'daily' | 'weekly' | 'monthly'>('none');
-  const [filter, setFilter] = useState<FilterType>('all');
-  const [search, setSearch] = useState('');
-  const [isAdding, setIsAdding] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabType>('pos');
+  
+  // Data State
+  const [products, setProducts] = useState<Product[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
+  
+  // POS State
+  const [cart, setCart] = useState<SaleItem[]>([]);
+  
+  // Form States
+  const [productName, setProductName] = useState('');
+  const [productPrice, setProductPrice] = useState('');
+  const [productStock, setProductStock] = useState('');
+  const [productImageUrl, setProductImageUrl] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-  // Handle Authentication
+    // Limit to 600KB to ensure Base64 string + metadata stays under 1MB Firestore limit
+    if (file.size > 600000) { 
+      alert("រូបភាពធំពេក! សូមប្រើរូបភាពដែលមានទំហំតូចជាង 600KB ដើម្បីរក្សាទុកបានជោគជ័យ។");
+      return;
+    }
+
+    setIsUploading(true);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setProductImageUrl(reader.result as string);
+      setIsUploading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+  
+  const [orderCustomer, setOrderCustomer] = useState('');
+  const [orderDesc, setOrderDesc] = useState('');
+  const [orderQty, setOrderQty] = useState('1');
+  const [orderPrice, setOrderPrice] = useState('');
+  
+  const [search, setSearch] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
@@ -61,476 +140,583 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Handle Firestore Real-time Updates
+  // Data Listeners
   useEffect(() => {
-    if (!user) {
-      setTodos([]);
-      return;
-    }
+    if (!user) return;
 
-    const q = query(
-      collection(db, 'todos'),
+    const productsQ = query(
+      collection(db, 'products'),
+      where('ownerId', '==', user.uid),
+      orderBy('createdAt', 'desc')
+    );
+    const ordersQ = query(
+      collection(db, 'orders'),
+      where('ownerId', '==', user.uid),
+      orderBy('createdAt', 'desc')
+    );
+    const salesQ = query(
+      collection(db, 'sales'),
       where('ownerId', '==', user.uid),
       orderBy('createdAt', 'desc')
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const todoData: Todo[] = [];
-      snapshot.forEach((doc) => {
-        todoData.push({ id: doc.id, ...doc.data() } as Todo);
-      });
-      setTodos(todoData);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'todos');
+    const unsubProducts = onSnapshot(productsQ, (snapshot) => {
+      setProducts(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Product)));
+    });
+    const unsubOrders = onSnapshot(ordersQ, (snapshot) => {
+      setOrders(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Order)));
+    });
+    const unsubSales = onSnapshot(salesQ, (snapshot) => {
+      setSales(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Sale)));
     });
 
-    return () => unsubscribe();
+    return () => { unsubProducts(); unsubOrders(); unsubSales(); };
   }, [user]);
 
-  const addTodo = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || !user || isAdding) return;
+  // Actions
+  const addToCart = (product: Product) => {
+    setCart(prev => {
+      const existing = prev.find(item => item.productId === product.id);
+      if (existing) {
+        return prev.map(item => 
+          item.productId === product.id 
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        );
+      }
+      return [...prev, { 
+        productId: product.id, 
+        name: product.name, 
+        price: product.price, 
+        quantity: 1 
+      }];
+    });
+  };
 
-    setIsAdding(true);
+  const removeFromCart = (productId: string) => {
+    setCart(prev => prev.filter(item => item.productId !== productId));
+  };
+
+  const updateCartQty = (productId: string, delta: number) => {
+    setCart(prev => prev.map(item => {
+      if (item.productId === productId) {
+        const newQty = Math.max(1, item.quantity + delta);
+        return { ...item, quantity: newQty };
+      }
+      return item;
+    }));
+  };
+
+  const checkout = async () => {
+    if (cart.length === 0 || !user) return;
+    setIsSubmitting(true);
     try {
-      const todoData: any = {
-        text: input,
-        completed: false,
+      const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+      
+      // 1. Create Sale
+      await addDoc(collection(db, 'sales'), {
+        items: cart,
+        totalAmount,
         ownerId: user.uid,
         createdAt: serverTimestamp(),
-        recurrence,
-      };
-
-      if (dueDateInput) {
-        todoData.dueDate = Timestamp.fromDate(new Date(dueDateInput));
-      }
-
-      await addDoc(collection(db, 'todos'), todoData);
-      setInput('');
-      setDueDateInput('');
-      setRecurrence('none');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'todos');
-    } finally {
-      setIsAdding(false);
-    }
-  };
-
-  const calculateNextDate = (currentDate: Date, pattern: 'daily' | 'weekly' | 'monthly') => {
-    const nextDate = new Date(currentDate);
-    if (pattern === 'daily') {
-      nextDate.setDate(nextDate.getDate() + 1);
-    } else if (pattern === 'weekly') {
-      nextDate.setDate(nextDate.getDate() + 7);
-    } else if (pattern === 'monthly') {
-      nextDate.setMonth(nextDate.getMonth() + 1);
-    }
-    return nextDate;
-  };
-
-  const toggleTodo = async (todo: Todo) => {
-    try {
-      const newCompleted = !todo.completed;
-      await updateDoc(doc(db, 'todos', todo.id), {
-        completed: newCompleted,
       });
 
-      // If marking as completed and it's recurring, create the next instance
-      if (newCompleted && todo.recurrence && todo.recurrence !== 'none') {
-        const currentDate = todo.dueDate 
-          ? (todo.dueDate.toDate ? todo.dueDate.toDate() : new Date(todo.dueDate))
-          : new Date();
-        
-        const nextDate = calculateNextDate(currentDate, todo.recurrence);
-        
-        await addDoc(collection(db, 'todos'), {
-          text: todo.text,
-          completed: false,
-          ownerId: todo.ownerId,
-          createdAt: serverTimestamp(),
-          dueDate: Timestamp.fromDate(nextDate),
-          recurrence: todo.recurrence,
-        });
+      // 2. Update Stock (Simple sequential update)
+      for (const item of cart) {
+        const product = products.find(p => p.id === item.productId);
+        if (product) {
+          await updateDoc(doc(db, 'products', product.id), {
+            stock: Math.max(0, product.stock - item.quantity)
+          });
+        }
       }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `todos/${todo.id}`);
+
+      setCart([]);
+      alert('ការលក់ត្រូវបានកត់ត្រាទុកដោយជោគជ័យ!');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'sales/products');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const deleteTodo = async (id: string) => {
+  const addProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !productName || !productPrice) return;
+    setIsSubmitting(true);
     try {
-      await deleteDoc(doc(db, 'todos', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `todos/${id}`);
+      await addDoc(collection(db, 'products'), {
+        name: productName,
+        price: Number(productPrice),
+        stock: Number(productStock) || 0,
+        imageUrl: productImageUrl,
+        ownerId: user.uid,
+        createdAt: serverTimestamp(),
+      });
+      setProductName(''); setProductPrice(''); setProductStock(''); setProductImageUrl('');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'products');
+    } finally { setIsSubmitting(false); }
+  };
+
+  const addOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !orderDesc || !orderPrice) return;
+    setIsSubmitting(true);
+    try {
+      await addDoc(collection(db, 'orders'), {
+        customerName: orderCustomer,
+        description: orderDesc,
+        quantity: Number(orderQty),
+        totalPrice: Number(orderPrice),
+        status: 'pending',
+        ownerId: user.uid,
+        createdAt: serverTimestamp(),
+      });
+      setOrderCustomer(''); setOrderDesc(''); setOrderQty('1'); setOrderPrice('');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'orders');
+    } finally { setIsSubmitting(false); }
+  };
+
+  const updateOrderStatus = async (id: string, status: Order['status']) => {
+    try {
+      await updateDoc(doc(db, 'orders', id), { status });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `orders/${id}`);
     }
   };
 
-  const getDueDateStatus = (dueDate: any) => {
-    if (!dueDate) return null;
-    
-    const date = dueDate.toDate ? dueDate.toDate() : new Date(dueDate);
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    date.setHours(0, 0, 0, 0);
-
-    const diffTime = date.getTime() - now.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-    if (diffDays < 0) return { label: 'ហួសកំណត់', color: 'text-red-500 bg-red-50', icon: <AlertCircle className="w-3 h-3" /> };
-    if (diffDays === 0) return { label: 'ថ្ងៃនេះ', color: 'text-orange-500 bg-orange-50', icon: <Clock className="w-3 h-3" /> };
-    if (diffDays <= 3) return { label: `ក្នុងរយៈពេល ${diffDays} ថ្ងៃ`, color: 'text-blue-500 bg-blue-50', icon: <Calendar className="w-3 h-3" /> };
-    
-    return { label: date.toLocaleDateString('km-KH'), color: 'text-gray-400 bg-gray-50', icon: <Calendar className="w-3 h-3" /> };
-  };
-
-  const getRecurrenceLabel = (pattern?: string) => {
-    switch (pattern) {
-      case 'daily': return 'រាល់ថ្ងៃ';
-      case 'weekly': return 'រាល់សប្តាហ៍';
-      case 'monthly': return 'រាល់ខែ';
-      default: return null;
+  const deleteItem = async (col: string, id: string) => {
+    if (!confirm('តើអ្នកប្រាកដថាចង់លុបមែនទេ?')) return;
+    try {
+      await deleteDoc(doc(db, col, id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `${col}/${id}`);
     }
-  };
-
-  const filteredTodos = todos
-    .filter(todo => {
-      if (filter === 'active') return !todo.completed;
-      if (filter === 'completed') return todo.completed;
-      return true;
-    })
-    .filter(todo => 
-      todo.text.toLowerCase().includes(search.toLowerCase())
-    );
-
-  const stats = {
-    total: todos.length,
-    active: todos.filter(t => !t.completed).length,
-    completed: todos.filter(t => t.completed).length,
   };
 
   const handleSignIn = async () => {
-    try {
-      await signIn();
-    } catch (error: any) {
-      console.error("Login Error Details:", {
-        code: error.code,
-        message: error.message,
-        domain: window.location.hostname
-      });
-      
-      if (error.code === 'auth/unauthorized-domain') {
-        const domain = window.location.hostname;
-        alert(`Domain "${domain}" មិនទាន់ត្រូវបានអនុញ្ញាតក្នុង Firebase ទេ។\n\nសូមអនុវត្តតាមជំហាននេះ៖\n1. ចូលទៅ Firebase Console\n2. ជ្រើសរើស "Authentication" -> "Settings"\n3. ជ្រើសរើស "Authorized domains"\n4. បន្ថែម "${domain}" ចូលក្នុងបញ្ជី។`);
-      } else if (error.code === 'auth/popup-blocked') {
-        alert("កម្មវិធីរុករក (Browser) របស់អ្នកបានរារាំងផ្ទាំង Login (Popup)។ សូមអនុញ្ញាតឱ្យ Popup បើកដំណើរការសម្រាប់គេហទំព័រនេះ។");
-      } else {
-        alert("មានបញ្ហាក្នុងការចូលប្រើប្រាស់៖ " + error.message);
-      }
-    }
+    try { await signIn(); } catch (error: any) { alert("Login Error: " + error.message); }
   };
 
-  if (loadingAuth) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f5f5f5]">
-        <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
-      </div>
-    );
-  }
+  if (loadingAuth) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-8 h-8 animate-spin text-indigo-500" /></div>;
 
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="glass p-12 rounded-[2.5rem] max-w-md w-full text-center shadow-2xl relative overflow-hidden"
-        >
+        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="glass p-12 rounded-[2.5rem] max-w-md w-full text-center shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
           <div className="bg-indigo-50 w-24 h-24 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-inner ring-4 ring-white">
-            <ListTodo className="w-12 h-12 text-indigo-600" />
+            <ShoppingCart className="w-12 h-12 text-indigo-600" />
           </div>
-          <h1 className="text-3xl font-bold mb-3 tracking-tight text-slate-800 khmer-font font-sans">សូមស្វាគមន៍</h1>
-          <p className="text-slate-500 text-base mb-10 khmer-font font-light italic">គ្រប់គ្រងរាល់កិច្ចការរបស់អ្នកនៅក្នុងកន្លែងតែមួយជាមួយភាពងាយស្រួល។</p>
-          
-          <div className="space-y-4">
-            <button
-              onClick={handleSignIn}
-              className="w-full flex items-center justify-center gap-4 bg-slate-900 text-white py-4 rounded-2xl hover:bg-slate-800 active:scale-[0.98] transition-all font-semibold shadow-lg shadow-indigo-200"
-            >
-              <LogIn className="w-6 h-6" />
-              <span className="khmer-font">ចូលជាមួយ Google</span>
-            </button>
-            
-            <p className="text-[10px] text-slate-400 khmer-font leading-relaxed">
-              * ប្រសិនបើអ្នកមិនអាចចូលបាន សូមប្រាកដថាអ្នកបានបន្ថែម Domain នេះទៅក្នុង <br/>
-              <span className="font-bold text-slate-500">Authorized Domains</span> ក្នុង Firebase Console។
-            </p>
-          </div>
+          <h1 className="text-3xl font-bold mb-3 text-slate-800 khmer-font">ហាងសម្ភារៈសិក្សា</h1>
+          <p className="text-slate-500 text-base mb-10 khmer-font font-light italic">គ្រប់គ្រងការលក់ និងសេវាកម្មថតចម្លងបានយ៉ាងងាយស្រួល។</p>
+          <button onClick={handleSignIn} className="w-full flex items-center justify-center gap-4 bg-slate-900 text-white py-4 rounded-2xl hover:bg-slate-800 transition-all font-semibold shadow-lg">
+            <LogIn className="w-6 h-6" />
+            <span className="khmer-font">ចូលជាមួយ Google</span>
+          </button>
         </motion.div>
       </div>
     );
   }
 
+  const filteredProducts = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+  const filteredOrders = orders.filter(o => o.description.toLowerCase().includes(search.toLowerCase()) || o.customerName?.toLowerCase().includes(search.toLowerCase()));
+
   return (
-    <div className="min-h-screen bg-slate-50 font-sans">
-      {/* Dynamic Background Elements */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden -z-10">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-100/50 blur-[120px]"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-purple-100/40 blur-[130px]"></div>
+    <div className="min-h-screen bg-slate-50 font-sans pb-20 md:pb-0">
+      {/* Sidebar - Desktop */}
+      <div className="fixed left-0 top-0 bottom-0 w-64 bg-slate-900 text-white hidden lg:flex flex-col p-6 z-20">
+        <div className="flex items-center gap-3 mb-10 px-2">
+          <div className="bg-indigo-500 p-2 rounded-xl">
+            <ShoppingCart className="w-6 h-6 text-white" />
+          </div>
+          <h1 className="text-xl font-bold khmer-font">ហាងសម្ភារៈ</h1>
+        </div>
+
+        <nav className="space-y-2 flex-grow">
+          <NavItem icon={<LayoutDashboard />} label="ការលក់ (POS)" active={activeTab === 'pos'} onClick={() => setActiveTab('pos')} />
+          <NavItem icon={<Printer />} label="សេវាកម្ម (Copy)" active={activeTab === 'orders'} onClick={() => setActiveTab('orders')} />
+          <NavItem icon={<Package />} label="បញ្ជីទំនិញ" active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} />
+          <NavItem icon={<History />} label="របាយការណ៍" active={activeTab === 'stats'} onClick={() => setActiveTab('stats')} />
+        </nav>
+
+        <div className="mt-auto border-t border-slate-800 pt-6">
+          <div className="flex items-center gap-3 mb-6 px-2">
+            <img src={user.photoURL || ''} className="w-10 h-10 rounded-full border-2 border-indigo-500" alt="" referrerPolicy="no-referrer" />
+            <div className="min-w-0">
+              <p className="text-sm font-bold truncate khmer-font">{user.displayName}</p>
+              <p className="text-[10px] text-slate-500 uppercase tracking-widest">{user.email?.split('@')[0]}</p>
+            </div>
+          </div>
+          <button onClick={logOut} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-slate-400 hover:bg-red-500/10 hover:text-red-500 transition-all text-sm font-bold">
+            <LogOut className="w-4 h-4" />
+            <span className="khmer-font">ចាកចេញ</span>
+          </button>
+        </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 py-8 md:py-12 flex flex-col lg:flex-row gap-8">
-        
-        {/* Left Sidebar - Stats & User */}
-        <aside className="lg:w-80 flex-shrink-0 space-y-6">
-          <motion.div 
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="glass rounded-3xl p-6 relative overflow-hidden"
-          >
-            <div className="flex items-center gap-4 mb-8">
-              <div className="relative">
-                <img src={user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName || user.email}&background=6366f1&color=fff`} className="w-14 h-14 rounded-2xl border-2 border-white shadow-sm object-cover" alt="User profile" referrerPolicy="no-referrer" />
-                <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white rounded-full"></div>
-              </div>
-              <div className="min-w-0">
-                <h2 className="font-bold text-slate-800 truncate leading-tight khmer-font">{user.displayName || 'អ្នកប្រើប្រាស់'}</h2>
-                <p className="text-slate-400 text-xs truncate uppercase tracking-widest font-semibold mt-0.5">{user.email?.split('@')[0]}</p>
-              </div>
-            </div>
-
-            <div className="space-y-4 mb-8">
-              <div className="p-4 rounded-2xl bg-indigo-50/50 border border-indigo-100/50">
-                <div className="flex justify-between items-center text-xs font-bold text-indigo-400 uppercase tracking-widest mb-3 khmer-font">
-                  <span>វឌ្ឍនភាព</span>
-                  <span>{stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0}%</span>
-                </div>
-                <div className="h-2 w-full bg-indigo-100 rounded-full overflow-hidden">
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${stats.total > 0 ? (stats.completed / stats.total) * 100 : 0}%` }}
-                    className="h-full bg-indigo-500 rounded-full"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="glass bg-white p-4 rounded-2xl text-center border-slate-100">
-                  <div className="text-2xl font-black text-slate-800">{stats.active}</div>
-                  <div className="text-[10px] uppercase tracking-wider font-bold text-slate-400 khmer-font">កំពុងធ្វើ</div>
-                </div>
-                <div className="glass bg-white p-4 rounded-2xl text-center border-slate-100">
-                  <div className="text-2xl font-black text-slate-800 text-green-500">{stats.completed}</div>
-                  <div className="text-[10px] uppercase tracking-wider font-bold text-slate-400 khmer-font">ចប់ហើយ</div>
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={logOut}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all text-sm font-bold uppercase tracking-widest"
-            >
-              <LogOut className="w-4 h-4" />
-              <span className="khmer-font">ចាកចេញ</span>
-            </button>
-          </motion.div>
-
-          <div className="hidden lg:block space-y-3">
-            <h3 className="px-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] khmer-font">តម្រង</h3>
-            {(['all', 'active', 'completed'] as FilterType[]).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`w-full flex items-center justify-between px-5 py-3.5 rounded-2xl text-sm font-bold transition-all ${
-                  filter === f
-                    ? 'bg-slate-900 text-white shadow-lg shadow-slate-200 translate-x-2'
-                    : 'text-slate-500 hover:bg-white hover:shadow-sm'
-                }`}
-              >
-                <span className="khmer-font">{f === 'all' ? 'ទាំងអស់' : f === 'active' ? 'កំពុងធ្វើ' : 'បានបញ្ចប់'}</span>
-                <span className={`text-[10px] px-2 py-0.5 rounded-lg ${filter === f ? 'bg-white/20' : 'bg-slate-100 text-slate-400'}`}>
-                  {f === 'all' ? stats.total : f === 'active' ? stats.active : stats.completed}
-                </span>
-              </button>
-            ))}
-          </div>
-        </aside>
-
-        {/* Main Content */}
-        <main className="flex-1 min-w-0 space-y-6">
-          <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <h1 className="text-3xl lg:text-4xl font-black text-slate-900 khmer-font">ការងារថ្ងៃនេះ</h1>
-            <div className="relative group sm:w-72">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="ស្វែងរក..."
-                className="w-full pl-12 pr-4 py-3.5 glass-dark text-white rounded-2xl text-sm outline-none placeholder:text-slate-500 ring-4 ring-transparent focus:ring-indigo-500/10 transition-all khmer-font"
+      {/* Main Area */}
+      <div className="lg:pl-64 min-h-screen">
+        <header className="sticky top-0 glass z-10 px-6 py-4 flex items-center justify-between border-b border-slate-100">
+          <h2 className="text-2xl font-black text-slate-800 khmer-font leading-none">
+            {activeTab === 'pos' ? 'ការលក់ទំនិញ' : activeTab === 'orders' ? 'ការងារថតចម្លង' : activeTab === 'inventory' ? 'គ្រប់គ្រងទំនិញ' : 'របាយការណ៍'}
+          </h2>
+          <div className="flex items-center gap-4">
+            <div className="relative group hidden sm:block">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input 
+                type="text" 
+                value={search} 
+                onChange={e => setSearch(e.target.value)} 
+                placeholder="ស្វែងរក..." 
+                className="pl-10 pr-4 py-2 bg-slate-100 rounded-xl text-sm outline-none w-48 focus:w-64 focus:bg-white focus:ring-2 focus:ring-indigo-500/10 transition-all khmer-font"
               />
             </div>
-          </header>
-
-          {/* Add Todo Inline Container */}
-          <motion.div 
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass rounded-3xl p-2 shadow-xl shadow-slate-200/50 group focus-within:ring-4 focus-within:ring-indigo-100"
-          >
-            <form onSubmit={addTodo} className="flex flex-col">
-              <div className="flex gap-2 p-2">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="តើអ្នកចង់ធ្វើអ្វីបន្តទៀត?"
-                  className="flex-1 px-4 py-4 bg-transparent outline-none text-lg font-medium placeholder:text-slate-300 text-slate-700 khmer-font"
-                />
-                <button
-                  type="submit"
-                  disabled={!input.trim() || isAdding}
-                  className="px-8 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 disabled:opacity-50 transition-all shadow-lg shadow-slate-300"
-                >
-                  {isAdding ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-6 h-6" />}
-                </button>
-              </div>
-              
-              <div className="flex flex-wrap items-center gap-4 px-6 pb-4 pt-2 border-t border-slate-50">
-                 <div className="relative flex items-center gap-2 group cursor-pointer">
-                    <Calendar className="w-4 h-4 text-slate-400 group-hover:text-indigo-500 transition-colors" />
-                    <span className={`text-xs font-bold uppercase tracking-widest khmer-font ${dueDateInput ? 'text-indigo-600' : 'text-slate-400'}`}>
-                      {dueDateInput || 'កាលបរិច្ឆេទ'}
-                    </span>
-                    <input
-                      type="date"
-                      value={dueDateInput}
-                      onChange={(e) => setDueDateInput(e.target.value)}
-                      className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                    />
-                 </div>
-
-                 <div className="relative flex items-center gap-2 group cursor-pointer">
-                    <RotateCcw className="w-4 h-4 text-slate-400 group-hover:text-orange-500 transition-colors" />
-                    <span className={`text-xs font-bold uppercase tracking-widest khmer-font ${recurrence !== 'none' ? 'text-orange-600' : 'text-slate-400'}`}>
-                      {recurrence === 'none' ? 'ការធ្វើឡើងវិញ' : getRecurrenceLabel(recurrence)}
-                    </span>
-                    <select
-                      value={recurrence}
-                      onChange={(e) => setRecurrence(e.target.value as any)}
-                      className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                    >
-                      <option value="none">មិនមាន</option>
-                      <option value="daily">រាល់ថ្ងៃ</option>
-                      <option value="weekly">រាល់សប្តាហ៍</option>
-                      <option value="monthly">រាល់ខែ</option>
-                    </select>
-                 </div>
-              </div>
-            </form>
-          </motion.div>
-
-          {/* mobile filters */}
-          <div className="lg:hidden flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-            {(['all', 'active', 'completed'] as FilterType[]).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`whitespace-nowrap px-6 py-3 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all ${
-                  filter === f
-                    ? 'bg-slate-900 text-white shadow-lg'
-                    : 'bg-white text-slate-400'
-                }`}
-              >
-                <span className="khmer-font">{f === 'all' ? 'ទាំងអស់' : f === 'active' ? 'កំពុងធ្វើ' : 'បានបញ្ចប់'}</span>
-              </button>
-            ))}
           </div>
+        </header>
 
-          {/* List Area */}
-          <div className="space-y-4">
-            <AnimatePresence mode="popLayout" initial={false}>
-              {filteredTodos.length > 0 ? (
-                filteredTodos.map((todo) => {
-                  const dueDateStatus = getDueDateStatus(todo.dueDate);
-                  return (
-                    <motion.div
-                      key={todo.id}
-                      layout
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.9 }}
-                      className={`group p-5 rounded-[2rem] border transition-all flex items-start gap-5 ${
-                        todo.completed 
-                          ? 'bg-slate-50/50 border-slate-100 opacity-70 grayscale-[0.5]' 
-                          : 'glass bg-white hover:shadow-xl hover:shadow-indigo-100/50'
-                      }`}
-                    >
-                      <button
-                        onClick={() => toggleTodo(todo)}
-                        className={`shrink-0 mt-1 transition-transform active:scale-90 ${
-                          todo.completed ? 'text-green-500' : 'text-slate-300 hover:text-indigo-400'
-                        }`}
+        <main className="p-6 max-w-7xl mx-auto">
+          <AnimatePresence mode="wait">
+            {activeTab === 'pos' && (
+              <motion.div key="pos" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="flex flex-col lg:flex-row gap-8">
+                {/* Product Catalog */}
+                <div className="flex-1 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xl font-bold text-slate-800 khmer-font">ជ្រើសរើសទំនិញ</h3>
+                    <div className="lg:hidden text-indigo-600">
+                      <div className="relative">
+                        <ShoppingCart className="w-6 h-6" />
+                        {cart.length > 0 && <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[8px] w-4 h-4 rounded-full flex items-center justify-center">{cart.length}</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {filteredProducts.map(p => (
+                      <button 
+                        key={p.id} 
+                        onClick={() => addToCart(p)}
+                        className="glass overflow-hidden rounded-3xl text-left hover:border-indigo-500 hover:shadow-xl transition-all group active:scale-95 flex flex-col"
                       >
-                        {todo.completed ? (
-                          <div className="w-7 h-7 bg-green-500 rounded-full flex items-center justify-center text-white shadow-lg shadow-green-100">
-                             <CheckCircle2 className="w-5 h-5" />
+                        <div className="relative h-40 w-full bg-slate-100 overflow-hidden">
+                          {p.imageUrl ? (
+                            <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-slate-300">
+                              <Package className="w-12 h-12" />
+                            </div>
+                          )}
+                          <div className="absolute top-3 right-3 bg-white/90 backdrop-blur px-3 py-1 rounded-full shadow-sm">
+                            <p className="text-sm font-black text-indigo-600">${p.price.toFixed(2)}</p>
                           </div>
-                        ) : (
-                          <div className="w-7 h-7 rounded-full border-2 border-slate-200 group-hover:border-indigo-300 transition-colors" />
-                        )}
+                        </div>
+                        <div className="p-5">
+                          <h3 className="font-bold text-slate-800 mb-1 khmer-font text-base truncate">{p.name}</h3>
+                          <p className={`text-[10px] uppercase font-black tracking-widest khmer-font ${p.stock < 10 ? 'text-red-500' : 'text-slate-400'}`}>ស្តុក៖ {p.stock}</p>
+                        </div>
                       </button>
-                      
+                    ))}
+                    {filteredProducts.length === 0 && (
+                      <div className="col-span-full py-20 text-center glass rounded-3xl border-dashed">
+                        <Package className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                        <p className="text-slate-400 khmer-font italic">មិនទាន់មានទំនិញលក់នៅឡើយ</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Shopping Cart Side Panel */}
+                <div className="lg:w-[400px] shrink-0">
+                  <div className="glass p-7 rounded-[2.5rem] sticky top-24 shadow-2xl shadow-indigo-100/50 flex flex-col h-[calc(100vh-12rem)] min-h-[550px]">
+                    <div className="flex items-center justify-between mb-8">
+                      <h3 className="text-2xl font-black text-slate-800 khmer-font">កន្ត្រកទំនិញ</h3>
+                      <div className="bg-indigo-500 text-white px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                        {cart.reduce((sum, item) => sum + item.quantity, 0)} Items
+                      </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-4 pr-2 scrollbar-hide">
+                      {cart.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-center py-10 opacity-30">
+                          <ShoppingCart className="w-16 h-16 mb-4 text-slate-300" />
+                          <p className="text-sm khmer-font font-medium uppercase tracking-widest text-slate-400">កន្ត្រកទទេស្អាត</p>
+                        </div>
+                      ) : (
+                        cart.map((item) => (
+                          <div key={item.productId} className="flex items-center gap-4 p-4 rounded-3xl bg-slate-50/50 border border-slate-100">
+                             <div className="flex-1 min-w-0">
+                               <p className="font-bold text-slate-800 truncate khmer-font">{item.name}</p>
+                               <p className="text-xs font-black text-indigo-500">${item.price.toFixed(2)}</p>
+                             </div>
+                             <div className="flex items-center gap-2 bg-white rounded-2xl p-1 shadow-sm border border-slate-100">
+                               <button onClick={() => updateCartQty(item.productId, -1)} className="w-8 h-8 flex items-center justify-center hover:bg-slate-50 rounded-xl text-slate-400 transition-colors">-</button>
+                               <span className="text-sm font-black w-5 text-center text-slate-700">{item.quantity}</span>
+                               <button onClick={() => updateCartQty(item.productId, 1)} className="w-8 h-8 flex items-center justify-center hover:bg-slate-50 rounded-xl text-slate-400 transition-colors">+</button>
+                             </div>
+                             <button onClick={() => removeFromCart(item.productId)} className="p-2 text-slate-300 hover:text-red-500 transition-colors">
+                               <Trash2 className="w-5 h-5" />
+                             </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    <div className="mt-8 pt-8 border-t border-slate-100 space-y-6">
+                      <div className="flex justify-between items-center px-2">
+                        <span className="text-slate-400 font-black uppercase tracking-[0.2em] text-[10px] khmer-font">សរុបការទូទាត់</span>
+                        <span className="text-4xl font-black text-slate-900 leading-none">
+                          <span className="text-indigo-500 text-lg mr-1">$</span>
+                          {cart.reduce((sum, item) => sum + (item.price * item.quantity), 0).toFixed(2)}
+                        </span>
+                      </div>
+                      <button 
+                        onClick={checkout}
+                        disabled={cart.length === 0 || isSubmitting}
+                        className="w-full bg-slate-900 text-white py-5 rounded-[2rem] font-black text-lg hover:bg-slate-800 disabled:opacity-50 disabled:grayscale transition-all shadow-xl shadow-slate-200 khmer-font flex items-center justify-center gap-4 active:scale-95"
+                      >
+                        {isSubmitting ? <Loader2 className="w-6 h-6 animate-spin" /> : <ShoppingCart className="w-6 h-6" />}
+                        បញ្ជាក់ការបង់ប្រាក់
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'orders' && (
+              <motion.div key="orders" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+                <motion.div className="glass p-6 rounded-[2rem] shadow-xl shadow-slate-200/50">
+                  <h3 className="text-lg font-bold text-slate-800 mb-4 khmer-font">បញ្ចូលសេវាកម្មថ្មី (Copy/Print)</h3>
+                  <form onSubmit={addOrder} className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <input type="text" value={orderCustomer} onChange={e => setOrderCustomer(e.target.value)} placeholder="ឈ្មោះអតិថិជន" className="px-4 py-3 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 khmer-font text-sm" />
+                    <input type="text" value={orderDesc} onChange={e => setOrderDesc(e.target.value)} placeholder="បរិយាយ (e.g. Copy សៀវភៅ)" required className="px-4 py-3 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 khmer-font text-sm md:col-span-2" />
+                    <div className="grid grid-cols-2 gap-2">
+                       <input type="number" value={orderQty} onChange={e => setOrderQty(e.target.value)} placeholder="ចំនួន" className="px-4 py-3 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 khmer-font text-sm" />
+                       <input type="number" step="0.01" value={orderPrice} onChange={e => setOrderPrice(e.target.value)} placeholder="តម្លៃសរុប ($)" required className="px-4 py-3 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 khmer-font text-sm" />
+                    </div>
+                    <button disabled={isSubmitting} type="submit" className="md:col-start-4 bg-indigo-600 text-white rounded-2xl py-3 font-bold hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 khmer-font shadow-lg shadow-indigo-100">
+                      {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+                      បន្ថែមការងារ
+                    </button>
+                  </form>
+                </motion.div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredOrders.map(o => (
+                    <div key={o.id} className="glass p-5 rounded-3xl flex items-start gap-4 hover:shadow-lg transition-all border-l-4 border-l-indigo-500">
+                      <div className={`p-3 rounded-2xl ${o.status === 'completed' ? 'bg-green-50 text-green-500' : o.status === 'in-progress' ? 'bg-blue-50 text-blue-500' : 'bg-orange-50 text-orange-500'}`}>
+                        {o.status === 'completed' ? <CheckCircle2 className="w-6 h-6" /> : o.status === 'in-progress' ? <Loader2 className="w-6 h-6 animate-spin" /> : <Clock className="w-6 h-6" />}
+                      </div>
                       <div className="flex-1 min-w-0">
-                        <h3
-                          className={`text-lg font-bold leading-tight transition-all khmer-font ${
-                            todo.completed ? 'text-slate-400 line-through' : 'text-slate-700'
-                          }`}
-                        >
-                          {todo.text}
-                        </h3>
-                        
-                        <div className="flex flex-wrap gap-3 mt-3">
-                          {dueDateStatus && (
-                            <div className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-2 ${dueDateStatus.color} shadow-sm`}>
-                              {dueDateStatus.icon}
-                              <span className="khmer-font">{dueDateStatus.label}</span>
-                            </div>
-                          )}
-                          {todo.recurrence && todo.recurrence !== 'none' && (
-                            <div className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-2 bg-orange-50 text-orange-600 border border-orange-100 shadow-sm">
-                              <RotateCcw className="w-3 h-3" />
-                              <span className="khmer-font">{getRecurrenceLabel(todo.recurrence)}</span>
-                            </div>
-                          )}
+                        <div className="flex justify-between items-start mb-1">
+                          <h4 className="font-bold text-slate-800 truncate khmer-font">{o.description}</h4>
+                          <p className="text-lg font-black text-slate-900">${o.totalPrice.toFixed(2)}</p>
+                        </div>
+                        <p className="text-xs text-slate-400 khmer-font mb-3">អតិថិជន៖ {o.customerName || 'ទូទៅ'} • ចំនួន៖ {o.quantity}</p>
+                        <div className="flex gap-2">
+                          {o.status === 'pending' && <button onClick={() => updateOrderStatus(o.id, 'in-progress')} className="px-3 py-1 bg-blue-50 text-blue-600 rounded-lg text-[10px] font-bold uppercase khmer-font">កំពុងធ្វើ</button>}
+                          {o.status !== 'completed' && <button onClick={() => updateOrderStatus(o.id, 'completed')} className="px-3 py-1 bg-green-50 text-green-600 rounded-lg text-[10px] font-bold uppercase khmer-font">បានរួចរាល់</button>}
+                          <button onClick={() => deleteItem('orders', o.id)} className="ml-auto p-1 text-slate-300 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       </div>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
 
-                      <button
-                        onClick={() => deleteTodo(todo.id)}
-                        className="opacity-0 group-hover:opacity-100 p-3 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-2xl transition-all shrink-0"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                    </motion.div>
-                  );
-                })
-              ) : (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="py-24 text-center glass border-dashed bg-transparent rounded-[3rem]"
-                >
-                   <div className="inline-flex items-center justify-center w-24 h-24 bg-white rounded-[2rem] shadow-sm mb-6">
-                      <ListTodo className="w-10 h-10 text-slate-200" />
-                   </div>
-                   <h3 className="text-xl font-bold text-slate-800 mb-2 khmer-font">មិនមានកិច្ចការទេ</h3>
-                   <p className="text-slate-400 text-sm max-w-[200px] mx-auto khmer-font font-light italic">រីករាយនឹងពេលវេលាសម្រាករបស់អ្នក ឬចាប់ផ្តើមបន្ថែមអ្វីដែលថ្មី។</p>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+            {activeTab === 'inventory' && (
+              <motion.div key="inventory" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+                <div className="glass p-6 rounded-[2rem] shadow-xl shadow-slate-200/50">
+                  <h3 className="text-lg font-bold text-slate-800 mb-4 khmer-font">បន្ថែមទំនិញថ្មី</h3>
+                  <form onSubmit={addProduct} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-4">
+                        <input type="text" value={productName} onChange={e => setProductName(e.target.value)} placeholder="ឈ្មោះទំនិញ" required className="w-full px-4 py-3 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 khmer-font text-sm" />
+                        <div className="grid grid-cols-2 gap-4">
+                          <input type="number" step="0.01" value={productPrice} onChange={e => setProductPrice(e.target.value)} placeholder="តម្លៃ ($)" required className="w-full px-4 py-3 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 khmer-font text-sm" />
+                          <input type="number" value={productStock} onChange={e => setProductStock(e.target.value)} placeholder="ក្នុងស្តុក" className="w-full px-4 py-3 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 khmer-font text-sm" />
+                        </div>
+                      </div>
+                      
+                      <div className="flex flex-col sm:flex-row gap-4 items-center bg-slate-50 p-4 rounded-2xl border-2 border-dashed border-slate-200">
+                        <div className="w-24 h-24 rounded-xl bg-white flex items-center justify-center overflow-hidden border border-slate-100 flex-shrink-0">
+                          {productImageUrl ? (
+                            <img src={productImageUrl} alt="Preview" className="w-full h-full object-cover" />
+                          ) : (
+                            <Package className="w-8 h-8 text-slate-200" />
+                          )}
+                        </div>
+                        <div className="flex-1 w-full flex flex-col gap-2">
+                          <label className="text-xs font-bold text-slate-400 khmer-font uppercase tracking-widest">រូបភាពផលិតផល</label>
+                          <div className="flex gap-2">
+                             <input 
+                               type="file" 
+                               accept="image/*" 
+                               onChange={handleFileChange} 
+                               id="file-upload"
+                               className="hidden" 
+                             />
+                             <label 
+                               htmlFor="file-upload" 
+                               className="flex-1 text-center bg-white border border-slate-200 text-slate-600 py-2.5 rounded-xl text-xs font-bold cursor-pointer hover:bg-slate-50 transition-all khmer-font"
+                             >
+                               {isUploading ? "កំពុងដំណើរការ..." : "ជ្រើសរើសរូបភាព"}
+                             </label>
+                             {productImageUrl && (
+                               <button 
+                                 type="button" 
+                                 onClick={() => setProductImageUrl('')}
+                                 className="px-4 py-2 bg-red-50 text-red-500 rounded-xl text-xs font-bold hover:bg-red-100 transition-all khmer-font"
+                               >
+                                 លុប
+                               </button>
+                             )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button disabled={isSubmitting || isUploading} type="submit" className="w-full md:w-auto px-12 bg-slate-900 text-white rounded-2xl py-3.5 font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 khmer-font shadow-lg">
+                      {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+                      បញ្ជាក់ទំនិញ
+                    </button>
+                  </form>
+                </div>
+
+                <div className="glass rounded-[2rem] overflow-hidden">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-50 border-b border-slate-100">
+                      <tr>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 khmer-font">ឈ្មោះទំនិញ</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 khmer-font text-right">តម្លៃ</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 khmer-font text-center">ក្នុងស្តុក</th>
+                        <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 khmer-font text-right">សកម្មភាព</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredProducts.map(p => (
+                        <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 rounded-xl bg-slate-100 overflow-hidden shrink-0 border border-slate-100">
+                                {p.imageUrl ? (
+                                  <img src={p.imageUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-slate-300">
+                                    <Package size={20} />
+                                  </div>
+                                )}
+                              </div>
+                              <span className="font-bold text-slate-700 khmer-font truncate">{p.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-right font-black text-indigo-600">${p.price.toFixed(2)}</td>
+                          <td className="px-6 py-4 text-center">
+                            <span className={`px-3 py-1 rounded-full text-xs font-bold ${p.stock < 10 ? 'bg-red-50 text-red-500' : 'bg-slate-100 text-slate-500'}`}>{p.stock}</span>
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <button onClick={() => deleteItem('products', p.id)} className="p-2 text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'stats' && (
+              <motion.div key="stats" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <StatCard icon={<TrendingUp />} label="ចំណូលសរុប (ការលក់)" value={`$${sales.reduce((sum, s) => sum + s.totalAmount, 0).toFixed(2)}`} color="bg-indigo-50 text-indigo-600" />
+                  <StatCard icon={<ShoppingCart />} label="ចំនួនការលក់សរុប" value={sales.length} color="bg-green-50 text-green-600" />
+                  <StatCard icon={<Printer />} label="ចំណូលពីសេវាកម្ម (Copy)" value={`$${orders.reduce((sum, o) => sum + o.totalPrice, 0).toFixed(2)}`} color="bg-blue-50 text-blue-600" />
+                </div>
+                
+                <h3 className="text-xl font-bold text-slate-800 khmer-font mt-10 mb-4">ប្រវត្តិនៃការលក់ចុងក្រោយ</h3>
+                <div className="space-y-3">
+                  {sales.map(s => (
+                    <div key={s.id} className="glass p-5 rounded-3xl flex justify-between items-center group hover:border-indigo-200 transition-all">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-indigo-50 p-3 rounded-2xl text-indigo-600 group-hover:bg-indigo-500 group-hover:text-white transition-colors">
+                          <History className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="font-bold text-sm text-slate-800 khmer-font">ប្រតិបត្តិការ #{s.id.slice(-6).toUpperCase()}</p>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{s.items.length} លំដាប់ទំនិញ</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-lg font-black text-slate-900 leading-none">${s.totalAmount.toFixed(2)}</p>
+                        <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-tighter">
+                          {s.createdAt?.toDate ? s.createdAt.toDate().toLocaleTimeString('km-KH') : 'ទើបតែកើតឡើង'}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  {sales.length === 0 && (
+                    <div className="py-24 text-center glass rounded-3xl border-dashed opacity-50">
+                      <History className="w-16 h-16 text-slate-200 mx-auto mb-4" />
+                      <p className="text-slate-400 khmer-font italic">មិនទាន់មានប្រវត្តិលក់នៅឡើយ</p>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </main>
+      </div>
+
+      {/* Bottom Nav - Mobile */}
+      <div className="fixed bottom-0 left-0 right-0 glass border-t border-slate-100 px-6 py-4 flex justify-between items-center lg:hidden z-20 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
+        <MobileNavItem icon={<LayoutDashboard />} active={activeTab === 'pos'} onClick={() => setActiveTab('pos')} />
+        <MobileNavItem icon={<Printer />} active={activeTab === 'orders'} onClick={() => setActiveTab('orders')} />
+        <MobileNavItem icon={<Package />} active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} />
+        <MobileNavItem icon={<History />} active={activeTab === 'stats'} onClick={() => setActiveTab('stats')} />
+      </div>
+    </div>
+  );
+}
+
+// Subcomponents
+function NavItem({ icon, label, active, onClick }: { icon: any, label: string, active: boolean, onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-4 px-5 py-4 rounded-3xl text-sm font-bold transition-all ${
+        active 
+          ? 'bg-indigo-600 text-white shadow-2xl shadow-indigo-500/40 translate-x-1' 
+          : 'text-slate-400 hover:text-white hover:bg-white/5'
+      }`}
+    >
+      {React.cloneElement(icon, { size: 20, strokeWidth: 2.5 })}
+      <span className="khmer-font">{label}</span>
+    </button>
+  );
+}
+
+function MobileNavItem({ icon, active, onClick }: { icon: any, active: boolean, onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`p-4 rounded-2xl transition-all active:scale-90 ${active ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-200' : 'text-slate-400 hover:bg-slate-50'}`}
+    >
+      {React.cloneElement(icon, { size: 24, strokeWidth: 2.5 })}
+    </button>
+  );
+}
+
+function StatCard({ icon, label, value, color }: { icon: any, label: string, value: string | number, color: string }) {
+  return (
+    <div className="glass p-7 rounded-[2.5rem] flex items-center gap-6 shadow-sm hover:shadow-md transition-shadow">
+      <div className={`p-5 rounded-3xl ${color}`}>
+        {React.cloneElement(icon, { size: 28, strokeWidth: 2.5 })}
+      </div>
+      <div>
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 khmer-font">{label}</p>
+        <p className="text-3xl font-black text-slate-800 leading-none">{value}</p>
       </div>
     </div>
   );

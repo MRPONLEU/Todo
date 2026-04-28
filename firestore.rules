@@ -27,40 +27,98 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // --- Todo Validation ---
-    function isValidTodo(data, isCreate) {
-      return data.keys().hasOnly(['text', 'completed', 'ownerId', 'createdAt', 'dueDate', 'recurrence'])
-        && (!('text' in data) || (data.text is string && data.text.size() <= 1000))
-        && (!('completed' in data) || data.completed is bool)
-        && (!('ownerId' in data) || data.ownerId is string)
-        && (!('createdAt' in data) || data.createdAt is timestamp)
-        && (!('dueDate' in data) || data.dueDate is timestamp)
-        && (!('recurrence' in data) || data.recurrence in ['none', 'daily', 'weekly', 'monthly'])
+    // --- Product Validation ---
+    function isValidProduct(data, isCreate) {
+      let allowedKeys = ['name', 'price', 'stock', 'ownerId', 'createdAt', 'imageUrl'];
+      let requiredKeys = ['name', 'price', 'stock', 'ownerId', 'createdAt'];
+      return data.keys().hasOnly(allowedKeys)
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.price is number && data.price >= 0
+        && data.stock is number && data.stock >= 0
+        && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 1048576))
+        && data.ownerId is string
+        && data.createdAt is timestamp
         && (!isCreate || (
-             data.keys().hasAll(['text', 'completed', 'ownerId', 'createdAt'])
-             && data.ownerId == request.auth.uid
+             data.keys().hasAll(requiredKeys)
+             && data.ownerId == request.auth.uid 
              && data.createdAt == request.time
            ));
     }
 
-    match /todos/{todoId} {
+    match /products/{productId} {
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow get: if isSignedIn() && isOwner(existing().ownerId);
-      
-      allow create: if isSignedIn() 
-        && isValidId(todoId)
-        && isValidTodo(incoming(), true);
+      allow create: if isSignedIn() && isValidId(productId) && isValidProduct(incoming(), true);
+      allow update: if isSignedIn() 
+        && isOwner(existing().ownerId) 
+        && isValidProduct(incoming(), false)
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt;
+      allow delete: if isSignedIn() && isOwner(existing().ownerId);
+    }
 
-      allow update: if isSignedIn()
-        && isOwner(existing().ownerId)
-        && isValidTodo(incoming(), false)
+    // --- Order Validation ---
+    function isValidOrder(data, isCreate) {
+      let requiredKeys = ['customerName', 'description', 'quantity', 'totalPrice', 'status', 'ownerId', 'createdAt'];
+      return data.keys().hasOnly(requiredKeys)
+        && data.customerName is string && data.customerName.size() <= 100
+        && data.description is string && data.description.size() > 0 && data.description.size() <= 500
+        && data.quantity is number && data.quantity > 0
+        && data.totalPrice is number && data.totalPrice >= 0
+        && data.status in ['pending', 'in-progress', 'completed']
+        && data.ownerId is string
+        && data.createdAt is timestamp
+        && (!isCreate || (
+             data.keys().hasAll(requiredKeys) && data.keys().size() == 7
+             && data.ownerId == request.auth.uid 
+             && data.createdAt == request.time
+             && data.status == 'pending'
+           ));
+    }
+
+    match /orders/{orderId} {
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isOwner(existing().ownerId);
+      allow create: if isSignedIn() && isValidId(orderId) && isValidOrder(incoming(), true);
+      allow update: if isSignedIn() 
+        && isOwner(existing().ownerId) 
+        && isValidOrder(incoming(), false)
+        && (
+          // Terminal state locking: Cannot edit completed orders
+          existing().status != 'completed' || incoming().status == 'completed'
+        )
         && incoming().ownerId == existing().ownerId
         && incoming().createdAt == existing().createdAt
         && (
-          incoming().diff(existing()).affectedKeys().hasAny(['completed', 'text', 'dueDate', 'recurrence'])
+          // Action: Update Status
+          (incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
+          // Action: Edit Order Details
+          (existing().status == 'pending' && incoming().diff(existing()).affectedKeys().hasAny(['customerName', 'description', 'quantity', 'totalPrice']))
         );
-
       allow delete: if isSignedIn() && isOwner(existing().ownerId);
+    }
+
+    // --- Sale Validation ---
+    function isValidSale(data, isCreate) {
+      let requiredKeys = ['items', 'totalAmount', 'ownerId', 'createdAt'];
+      return data.keys().hasOnly(requiredKeys)
+        && data.items is list && data.items.size() > 0
+        && data.totalAmount is number && data.totalAmount >= 0
+        && data.ownerId is string
+        && data.createdAt is timestamp
+        && (!isCreate || (
+             data.keys().hasAll(requiredKeys) && data.keys().size() == 4
+             && data.ownerId == request.auth.uid 
+             && data.createdAt == request.time
+           ));
+    }
+
+    match /sales/{saleId} {
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isOwner(existing().ownerId);
+      allow create: if isSignedIn() && isValidId(saleId) && isValidSale(incoming(), true);
+      // Sales are typically immutable for accounting
+      allow update, delete: if false;
     }
   }
 }

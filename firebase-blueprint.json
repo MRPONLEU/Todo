@@ -1,45 +1,59 @@
 {
   "entities": {
-    "Todo": {
-      "title": "Todo",
-      "description": "A task item in the todo list",
+    "Product": {
+      "title": "ផលិតផល",
+      "description": "ទំនិញក្នុងហាង (ប៊ិច, សៀវភៅ, ...)",
       "type": "object",
       "properties": {
-        "text": {
-          "type": "string",
-          "description": "The task description"
-        },
-        "completed": {
-          "type": "boolean",
-          "description": "Whether the task is completed"
-        },
-        "ownerId": {
-          "type": "string",
-          "description": "The UID of the user who owns this task"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "When the task was created"
-        },
-        "dueDate": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Optional due date for the task"
-        },
-        "recurrence": {
-          "type": "string",
-          "enum": ["none", "daily", "weekly", "monthly"],
-          "description": "Recurrence pattern for the task"
-        }
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "stock": { "type": "number" },
+        "imageUrl": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["text", "completed", "ownerId", "createdAt"]
+      "required": ["name", "price", "ownerId", "createdAt"]
+    },
+    "Order": {
+      "title": "ការងារថតចម្លង/បោះពុម្ព",
+      "description": "សេវាកម្ម Copy, Printing",
+      "type": "object",
+      "properties": {
+        "customerName": { "type": "string" },
+        "description": { "type": "string" },
+        "quantity": { "type": "number" },
+        "totalPrice": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "in-progress", "completed"] },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["description", "quantity", "totalPrice", "status", "ownerId", "createdAt"]
+    },
+    "Sale": {
+      "title": "ការលក់",
+      "description": "ប្រតិបត្តិការលក់ទំនិញតាម POS",
+      "type": "object",
+      "properties": {
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["items", "totalAmount", "ownerId", "createdAt"]
     }
   },
   "firestore": {
-    "todos/{todoId}": {
-      "schema": "Todo",
-      "description": "Collection of todo items"
+    "products/{productId}": {
+      "schema": "Product",
+      "description": "បញ្ជីទំនិញក្នុងហាង"
+    },
+    "orders/{orderId}": {
+      "schema": "Order",
+      "description": "បញ្ជីការងារថតចម្លង"
+    },
+    "sales/{saleId}": {
+      "schema": "Sale",
+      "description": "ប្រវត្តិនៃការលក់ទំនិញ"
     }
   }
 }
