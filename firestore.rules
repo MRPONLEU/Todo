@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Todo Validation ---
+    function isValidTodo(data, isCreate) {
+      return data.keys().hasOnly(['text', 'completed', 'ownerId', 'createdAt', 'dueDate', 'recurrence'])
+        && (!('text' in data) || (data.text is string && data.text.size() <= 1000))
+        && (!('completed' in data) || data.completed is bool)
+        && (!('ownerId' in data) || data.ownerId is string)
+        && (!('createdAt' in data) || data.createdAt is timestamp)
+        && (!('dueDate' in data) || data.dueDate is timestamp)
+        && (!('recurrence' in data) || data.recurrence in ['none', 'daily', 'weekly', 'monthly'])
+        && (!isCreate || (
+             data.keys().hasAll(['text', 'completed', 'ownerId', 'createdAt'])
+             && data.ownerId == request.auth.uid
+             && data.createdAt == request.time
+           ));
+    }
+
+    match /todos/{todoId} {
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow get: if isSignedIn() && isOwner(existing().ownerId);
+      
+      allow create: if isSignedIn() 
+        && isValidId(todoId)
+        && isValidTodo(incoming(), true);
+
+      allow update: if isSignedIn()
+        && isOwner(existing().ownerId)
+        && isValidTodo(incoming(), false)
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && (
+          incoming().diff(existing()).affectedKeys().hasAny(['completed', 'text', 'dueDate', 'recurrence'])
+        );
+
+      allow delete: if isSignedIn() && isOwner(existing().ownerId);
+    }
+  }
+}
