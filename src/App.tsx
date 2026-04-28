@@ -208,6 +208,19 @@ export default function App() {
     completed: todos.filter(t => t.completed).length,
   };
 
+  const handleSignIn = async () => {
+    try {
+      await signIn();
+    } catch (error: any) {
+      console.error("Login Error:", error);
+      if (error.code === 'auth/unauthorized-domain') {
+        alert("Domain នេះមិនទាន់ត្រូវបានអនុញ្ញាតក្នុង Firebase ទេ។ សូមបន្ថែម " + window.location.hostname + " ទៅកាន់ Authorized Domains ក្នុង Firebase Console។");
+      } else {
+        alert("មានបញ្ហាក្នុងការចូលប្រើប្រាស់៖ " + error.message);
+      }
+    }
+  };
+
   if (loadingAuth) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f5f5f5]">
@@ -230,7 +243,7 @@ export default function App() {
           <h1 className="text-2xl font-medium mb-2">សូមស្វាគមន៍</h1>
           <p className="text-gray-500 text-sm mb-8">សូមចូលប្រើប្រាស់ដើម្បីរក្សាទុកបញ្ជីការងាររបស់អ្នក</p>
           <button
-            onClick={signIn}
+            onClick={handleSignIn}
             className="w-full flex items-center justify-center gap-3 bg-black text-white py-3 rounded-xl hover:bg-gray-800 transition-all font-medium"
           >
             <LogIn className="w-5 h-5" />
